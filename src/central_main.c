@@ -11,7 +11,7 @@
  *******************************************************************************/
 
 /******************************************************************************/
-/* ͷ�ļ����� */
+/* ͷ�ļ����� */
 #include "CONFIG.h"
 #include "hal.h"
 #include "central.h"
@@ -28,7 +28,7 @@ const uint8_t MacAddr[6] = {0x84, 0xC2, 0xE4, 0x03, 0x02, 0x02};
 /*********************************************************************
  * @fn      Main_Circulation
  *
- * @brief   ��ѭ��
+ * @brief   ��ѭ��
  *
  * @return  none
  */
@@ -42,10 +42,21 @@ void Main_Circulation()
     }
 }
 
+void GamepadInputCallback(uint8_t *data, uint16_t len)
+{
+    // Обработка входных данных геймпада
+    PRINT("Gamepad Input Report Data: ");
+    for (uint16_t i = 0; i < len; i++) {
+        PRINT("%02X ", data[i]);
+    }
+    PRINT("\n");
+}
+
+
 /*********************************************************************
  * @fn      main
  *
- * @brief   ������
+ * @brief   ������
  *
  * @return  none
  */
@@ -69,6 +80,7 @@ int main(void)
     HAL_Init();
     GAPRole_CentralInit();
     Central_Init();
+    Central_RegisterGamepadInputCallback(GamepadInputCallback);
     Main_Circulation();
 }
 

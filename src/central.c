@@ -3,9 +3,9 @@
 * Author             : WCH
 * Version            : V1.1
 * Date               : 2020/08/06
-* Description        : �������̣�����ɨ����Χ�豸�������������Ĵӻ��豸��ַ��
-*                      Ѱ���Զ������������ִ�ж�д�������ӻ��������ʹ��,
-                       �����ӻ��豸��ַ�޸�Ϊ������Ŀ���ַ��Ĭ��Ϊ(84:C2:E4:03:02:02)
+* Description        : �������̣�����ɨ����Χ�豸�������������Ĵӻ��豸��ַ��
+*                      Ѱ���Զ������������ִ�ж�д�������ӻ��������ʹ��,
+                       �����ӻ��豸��ַ�޸�Ϊ������Ŀ���ַ��Ĭ��Ϊ(84:C2:E4:03:02:02)
  *********************************************************************************
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
  * Attention: This software (modified or not) and binary are used for 
@@ -16,7 +16,6 @@
  * INCLUDES
  */
 #include "CONFIG.h"
-#include "gattprofile.h"
 #include "central.h"
 
 /*********************************************************************
@@ -78,10 +77,10 @@
 #define DEFAULT_PASSCODE                    0
 
 // Default GAP pairing mode
-#define DEFAULT_PAIRING_MODE                GAPBOND_PAIRING_MODE_WAIT_FOR_REQ
+#define DEFAULT_PAIRING_MODE                GAPBOND_PAIRING_MODE_INITIATE
 
 // Default MITM mode (TRUE to require passcode or OOB when pairing)
-#define DEFAULT_MITM_MODE                   TRUE
+#define DEFAULT_MITM_MODE                   FALSE
 
 // Default bonding mode, TRUE to bond, max bonding 6 devices
 #define DEFAULT_BONDING_MODE                TRUE
@@ -154,13 +153,13 @@ static uint8_t centralScanRes;
 static gapDevRec_t centralDevList[DEFAULT_MAX_SCAN_RES];
 
 // Peer device address
-static uint8_t PeerAddrDef[B_ADDR_LEN] = {0x02, 0x02, 0x03, 0xE4, 0xC2, 0x84};
+static uint8_t PeerAddrDef[B_ADDR_LEN] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
 
 // RSSI polling state
-static uint8_t centralRssi = TRUE;
+static uint8_t centralRssi = FALSE;
 
 // Parameter update state
-static uint8_t centralParamUpdate = TRUE;
+static uint8_t centralParamUpdate = FALSE;
 
 // Phy update state
 static uint8_t centralPhyUpdate = FALSE;
@@ -192,6 +191,16 @@ static uint8_t centralDoWrite = TRUE;
 
 // GATT read/write procedure state
 static uint8_t centralProcedureInProgress = FALSE;
+
+// Application callback for gamepad input reports
+static gamepadInputCallback_t gamepadInputCB;
+
+// Интервалы мигания LED
+#define LED_BLINK_SLOW_MS 1000 // Медленное моргание (1 секунда) - сканирование
+#define LED_BLINK_FAST_MS 150  // Быстрое моргание (150 мс) - сопряжение/настройка
+#define LED_BLINK_OFF     0    // Выключено
+
+static uint16_t ledBlinkPeriod = LED_BLINK_SLOW_MS; // Начинаем с медленного
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
@@ -206,6 +215,8 @@ static void central_ProcessTMOSMsg(tmos_event_hdr_t *pMsg);
 static void centralGATTDiscoveryEvent(gattMsgEvent_t *pMsg);
 static void centralStartDiscovery(void);
 static void centralAddDeviceInfo(uint8_t *pAddr, uint8_t addrType);
+static uint8_t adv_contains_uuid16(const uint8_t *adv, uint8_t advLen, uint16_t uuid16);
+static void setLedBlink(uint16_t ledBlinkPeriod);
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -243,6 +254,14 @@ static gapBondCBs_t centralBondCB = {
  */
 void Central_Init()
 {
+    EEPROM_READ(0, PeerAddrDef, B_ADDR_LEN);
+    PRINT("PeerAddrDef : ");
+    for(int i = 0; i < B_ADDR_LEN; i++)
+    {
+        PRINT("%02x ", PeerAddrDef[i]);
+    }
+    PRINT("\n");
+
     centralTaskId = TMOS_ProcessEventRegister(Central_ProcessEvent);
 
     // Setup GAP
@@ -271,6 +290,11 @@ void Central_Init()
     GATT_RegisterForInd(centralTaskId);
     // Setup a delayed profile startup
     tmos_set_event(centralTaskId, START_DEVICE_EVT);
+
+    // init LED pin
+    GPIOA_SetBits(GPIO_Pin_8);
+    GPIOA_ModeCfg(GPIO_Pin_8, GPIO_ModeOut_PP_5mA);
+    setLedBlink(LED_BLINK_SLOW_MS);
 }
 
 /*********************************************************************
@@ -425,8 +449,39 @@ uint16_t Central_ProcessEvent(uint8_t task_id, uint16_t events)
         return (events ^ START_READ_RSSI_EVT);
     }
 
+    if (events & START_LED_BLINK_EVT)
+    {
+        // Переключаем состояние LED (мигаем)
+        GPIOA_InverseBits(GPIO_Pin_8);
+        // Перезапускаем таймер, если период > 0 (LED_BLINK_OFF)
+        if(ledBlinkPeriod > 0)
+        {
+            tmos_start_task(centralTaskId, START_LED_BLINK_EVT, ledBlinkPeriod); 
+        }
+        else
+        {
+            GPIOA_ResetBits(GPIO_Pin_8); // LED  ON
+        }
+        return (events ^ START_LED_BLINK_EVT);
+    }
+
     // Discard unknown events
     return 0;
+}
+
+/*********************************************************************
+ * @fn      Central_RegisterGamepadInputCallback
+ *
+ * @brief   Register a callback function to receive gamepad input reports
+ *
+ * @param   cb - callback function pointer
+ *
+ * @return  none
+ */
+extern void Central_RegisterGamepadInputCallback(gamepadInputCallback_t cb)
+{
+    // Store the callback function pointer
+    gamepadInputCB = cb;
 }
 
 /*********************************************************************
@@ -520,7 +575,16 @@ static void centralProcessGATTMsg(gattMsgEvent_t *pMsg)
     }
     else if(pMsg->method == ATT_HANDLE_VALUE_NOTI)
     {
-        PRINT("Receive noti: %x\n", *pMsg->msg.handleValueNoti.pValue);
+        // Указатель на массив данных
+        uint8_t *pValue = pMsg->msg.handleValueNoti.pValue;
+        // Длина данных
+        uint16_t len = pMsg->msg.handleValueNoti.len;
+
+        if (gamepadInputCB)
+        {
+            gamepadInputCB(pValue, len);
+        }
+
     }
     else if(centralDiscState != BLE_DISC_STATE_IDLE)
     {
@@ -586,6 +650,25 @@ static void centralEventCB(gapRoleEvent_t *pEvent)
         {
             // Add device to list
             centralAddDeviceInfo(pEvent->deviceInfo.addr, pEvent->deviceInfo.addrType);
+
+            // Обычно в pEvent->deviceInfo есть указатель на adv данные и их длина
+            uint8_t *adv = pEvent->deviceInfo.pEvtData; 
+            uint8_t advLen = pEvent->deviceInfo.dataLen; 
+
+            // Safety: если нет adv данных — просто запомним устройство как раньше
+            if (adv && advLen)
+            {
+                if (adv_contains_uuid16(adv, advLen, HID_SERV_UUID)) // HID service UUID
+                {
+                    PRINT("Found HID advertising -> connect. Addr: %x %x %x %x %x %x\n",
+                          pEvent->deviceInfo.addr[0], pEvent->deviceInfo.addr[1], pEvent->deviceInfo.addr[2],
+                          pEvent->deviceInfo.addr[3], pEvent->deviceInfo.addr[4], pEvent->deviceInfo.addr[5]);
+
+                    // Копируем адрес в PeerAddrDef 
+                    tmos_memcpy(PeerAddrDef, pEvent->deviceInfo.addr, B_ADDR_LEN);
+
+                }
+            }
         }
         break;
 
@@ -644,7 +727,7 @@ static void centralEventCB(gapRoleEvent_t *pEvent)
                 GATT_ExchangeMTU(centralConnHandle, &req, centralTaskId);
 
                 // Initiate service discovery
-                tmos_start_task(centralTaskId, START_SVC_DISCOVERY_EVT, DEFAULT_SVC_DISCOVERY_DELAY);
+                //tmos_start_task(centralTaskId, START_SVC_DISCOVERY_EVT, DEFAULT_SVC_DISCOVERY_DELAY); // ЗАКОММЕНТИРОВАНО! иначе будет ошибка
 
                 // See if initiate connect parameter update
                 if(centralParamUpdate)
@@ -690,12 +773,14 @@ static void centralEventCB(gapRoleEvent_t *pEvent)
             GAPRole_CentralStartDiscovery(DEFAULT_DISCOVERY_MODE,
                                           DEFAULT_DISCOVERY_ACTIVE_SCAN,
                                           DEFAULT_DISCOVERY_WHITE_LIST);
+            setLedBlink(LED_BLINK_SLOW_MS);
         }
         break;
 
         case GAP_LINK_PARAM_UPDATE_EVENT:
         {
             PRINT("Param Update...\n");
+            setLedBlink(LED_BLINK_OFF); //при успешном подключении отключаем быстрое моргание
         }
         break;
 
@@ -764,6 +849,13 @@ static void centralPairStateCB(uint16_t connHandle, uint8_t state, uint8_t statu
         if(status == SUCCESS)
         {
             PRINT("Bond save success\n");
+
+            // start led blink fast
+            setLedBlink(LED_BLINK_FAST_MS);
+            EEPROM_ERASE(0, EEPROM_BLOCK_SIZE);
+            EEPROM_WRITE(0,  PeerAddrDef, B_ADDR_LEN);
+             // Initiate service discovery
+            tmos_start_task(centralTaskId, START_SVC_DISCOVERY_EVT, DEFAULT_SVC_DISCOVERY_DELAY);
         }
         else
         {
@@ -805,8 +897,8 @@ static void centralPasscodeCB(uint8_t *deviceAddr, uint16_t connectionHandle,
  */
 static void centralStartDiscovery(void)
 {
-    uint8_t uuid[ATT_BT_UUID_SIZE] = {LO_UINT16(SIMPLEPROFILE_SERV_UUID),
-                                      HI_UINT16(SIMPLEPROFILE_SERV_UUID)};
+    uint8_t uuid[ATT_BT_UUID_SIZE] = {LO_UINT16(HID_SERV_UUID),
+                                      HI_UINT16(HID_SERV_UUID)};
 
     // Initialize cached handles
     centralSvcStartHdl = centralSvcEndHdl = centralCharHdl = 0;
@@ -855,8 +947,8 @@ static void centralGATTDiscoveryEvent(gattMsgEvent_t *pMsg)
                 req.startHandle = centralSvcStartHdl;
                 req.endHandle = centralSvcEndHdl;
                 req.type.len = ATT_BT_UUID_SIZE;
-                req.type.uuid[0] = LO_UINT16(SIMPLEPROFILE_CHAR1_UUID);
-                req.type.uuid[1] = HI_UINT16(SIMPLEPROFILE_CHAR1_UUID);
+                req.type.uuid[0] = LO_UINT16(INPUT_REPORT_CHAR_UUID);
+                req.type.uuid[1] = HI_UINT16(INPUT_REPORT_CHAR_UUID);
 
                 GATT_ReadUsingCharUUID(centralConnHandle, &req, centralTaskId);
             }
@@ -950,4 +1042,37 @@ static void centralAddDeviceInfo(uint8_t *pAddr, uint8_t addrType)
     }
 }
 
+// Проверка, содержит ли рекламный пакет указанный 16-битный UUID
+uint8_t adv_contains_uuid16(const uint8_t *adv_data, uint8_t adv_len, uint16_t uuid16)
+{
+    uint8_t pos = 0;
+
+    while (pos + 1 < adv_len) {
+        uint8_t len = adv_data[pos]; // длина следующего сегмента
+        if (len == 0 || pos + len + 1 > adv_len)
+            break; // защита от выхода за границы
+
+        uint8_t type = adv_data[pos + 1];
+
+        // Типы 0x02 и 0x03 — это списки 16-битных UUID (partial и complete)
+        if (type == 0x02 || type == 0x03) {
+            for (uint8_t i = 0; i + 1 < len - 1; i += 2) {
+                uint16_t u = adv_data[pos + 2 + i] | (adv_data[pos + 3 + i] << 8);
+                if (u == uuid16)
+                    return 1; // найден нужный сервис
+            }
+        }
+
+        pos += len + 1; // переходим к следующему TLV-сегменту
+    }
+
+    return 0; // сервис не найден
+}
+
+
+static void setLedBlink(uint16_t period_ms)
+{
+    ledBlinkPeriod = period_ms;
+    tmos_set_event(centralTaskId, START_LED_BLINK_EVT);
+}
 /************************ endfile @ central **************************/

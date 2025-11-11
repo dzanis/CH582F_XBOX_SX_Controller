@@ -3,7 +3,7 @@
  * Author             : WCH
  * Version            : V1.0
  * Date               : 2018/11/12
- * Description        : ¹Û²ìÓ¦ÓÃÖ÷º¯Êý¼°ÈÎÎñÏµÍ³³õÊ¼»¯
+ * Description        : ï¿½Û²ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÏµÍ³ï¿½ï¿½Ê¼ï¿½ï¿½
  *********************************************************************************
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
  * Attention: This software (modified or not) and binary are used for 
@@ -24,6 +24,14 @@ extern "C" {
 /*********************************************************************
  * CONSTANTS
  */
+// xbox controller service and characteristic UUIDs
+#define GENERAL_SERV_UUID     0x1801 
+// battery service and characteristic UUIDs
+#define BATTERY_SERV_UUID     0x180F
+#define BATTERY_LEVEL_CHAR_UUID    0x2A19
+// HID service and characteristic UUIDs
+#define HID_SERV_UUID    0x1812 // HID service UUID
+#define INPUT_REPORT_CHAR_UUID    0x2A4D // get xbox gamepad input report characteristic UUID (stick, button, trigger data)
 
 // Simple BLE Observer Task Events
 #define START_DEVICE_EVT              0x0001
@@ -36,6 +44,16 @@ extern "C" {
 #define START_WRITE_CCCD_EVT          0x0080
 #define START_READ_RSSI_EVT           0x0100
 #define ESTABLISH_LINK_TIMEOUT_EVT    0x0200
+#define START_LED_BLINK_EVT           0x0400
+
+/*********************************************************************
+ * TYPEDEFS
+ */
+
+// Gamepad input report callback function type    
+typedef void (*gamepadInputCallback_t)(uint8_t *data, uint16_t len);
+
+
 
 /*********************************************************************
  * MACROS
@@ -54,6 +72,11 @@ extern void Central_Init(void);
  * Task Event Processor for the BLE Application
  */
 extern uint16_t Central_ProcessEvent(uint8_t task_id, uint16_t events);
+
+/*
+ * Register a callback function to receive gamepad input reports
+ */
+extern void Central_RegisterGamepadInputCallback(gamepadInputCallback_t cb);
 
 /*********************************************************************
 *********************************************************************/
