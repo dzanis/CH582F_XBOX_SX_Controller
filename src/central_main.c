@@ -15,6 +15,7 @@
 #include "CONFIG.h"
 #include "hal.h"
 #include "central.h"
+#include "xbox_sx_controller.h"
 
 /*********************************************************************
  * GLOBAL TYPEDEFS
@@ -42,14 +43,33 @@ void Main_Circulation()
     }
 }
 
-void GamepadInputCallback(uint8_t *data, uint16_t len)
+
+
+static XboxControllerState_t xc_state = {0}; 
+
+
+void handle_xbox_data(uint8_t* ble_data, uint16_t data_len) 
 {
-    // Обработка входных данных геймпада
-    PRINT("Gamepad Input Report Data: ");
-    for (uint16_t i = 0; i < len; i++) {
-        PRINT("%02X ", data[i]);
+    if (tmos_memcmp(&xc_state, ble_data, XBOX_CONTROLLER_TOTAL_PACKAGE_SIZE))
+    {
+        return; // skipping duplicate data
     }
-    PRINT("\n");
+
+    uint8_t error = Xbox_Update_State(&xc_state, ble_data, data_len);
+
+    if (error == 0)
+    {
+        Xbox_Print_State(&xc_state);
+
+        if (XBOX_IS_PRESSED(xc_state.buttonShare, BUTTON_SHARE))
+        {
+            PRINT("Share pressed!\n");
+        }
+    }
+    else
+    {
+        PRINT("Error parsing Xbox data: %u\n", error);
+    }
 }
 
 
@@ -80,7 +100,7 @@ int main(void)
     HAL_Init();
     GAPRole_CentralInit();
     Central_Init();
-    Central_RegisterGamepadInputCallback(GamepadInputCallback);
+    Central_RegisterGamepadInputCallback(handle_xbox_data);
     Main_Circulation();
 }
 
