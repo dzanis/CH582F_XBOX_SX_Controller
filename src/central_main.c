@@ -61,7 +61,7 @@ void handle_xbox_data(uint8_t* ble_data, uint16_t data_len)
     {
         Xbox_Print_State(&xc_state);
 
-        if (XBOX_IS_PRESSED(xc_state.buttonShare, BUTTON_SHARE))
+        if (Xbox_Is_Pressed(&xc_state, SHARE))
         {
             PRINT("Share pressed!\n");
         }
